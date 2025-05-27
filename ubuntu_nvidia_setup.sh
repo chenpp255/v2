@@ -74,7 +74,5 @@ bash /tmp/install.sh
 # 可选：备用源（若上面源失败可改成下面这句）
 # export url='https://gh.jwsc.eu.org/master' && bash -c "$(curl -kfsSl $url/install.sh)" && source /etc/profile &> /dev/null
 
-fi
-
 info "✅ 安装全部完成！建议现在重启系统："
 echo -e "\n\033[1;33mreboot\033[0m"
