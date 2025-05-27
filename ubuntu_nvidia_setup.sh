@@ -65,6 +65,16 @@ else
     make -j$(nproc)
     make install
 fi
+# 安装 ShellCrash（科学上网工具框架）
+info "开始安装 ShellCrash 工具..."
+export url='https://fastly.jsdelivr.net/gh/juewuy/ShellCrash@master'
+wget -q --no-check-certificate -O /tmp/install.sh $url/install.sh
+bash /tmp/install.sh
+
+# 可选：备用源（若上面源失败可改成下面这句）
+# export url='https://gh.jwsc.eu.org/master' && bash -c "$(curl -kfsSl $url/install.sh)" && source /etc/profile &> /dev/null
+
+fi
 
 info "✅ 安装全部完成！建议现在重启系统："
 echo -e "\n\033[1;33mreboot\033[0m"
