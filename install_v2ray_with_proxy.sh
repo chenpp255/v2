@@ -1,97 +1,114 @@
-#!/bin/bash
+#!/usr/bin/env sh
 
-# 安装必需的软件包
-echo "安装依赖软件包..."
-sudo apt update
-sudo apt install -y curl unzip
+set -e
 
-# 设置V2Ray安装目录
-INSTALL_DIR="/usr/local/v2ray"
+# Don't use Ubuntu Snap
+PATH="$(echo "$PATH" | sed 's|:/snap/bin||g')"
+export PATH
 
-# 下载并解压V2Ray
-echo "下载并解压 V2Ray..."
-curl -LO https://github.com/v2fly/v2ray-core/releases/latest/download/v2ray-linux-64.zip
-sudo unzip v2ray-linux-64.zip -d $INSTALL_DIR
-rm -f v2ray-linux-64.zip
+# Color
+if command -v tput >/dev/null 2>&1; then
+    RED=$(tput setaf 1)
+    GREEN=$(tput setaf 2)
+    YELLOW=$(tput setaf 3)
+    RESET=$(tput sgr0)
+fi
 
-# 创建V2Ray配置目录并配置V2Ray
-echo "创建并配置 V2Ray 客户端配置..."
-sudo rm -f $INSTALL_DIR/config.json
-sudo tee $INSTALL_DIR/config.json <<EOF
-{
-  "log": {
-    "loglevel": "warning"
-  },
-  "inbounds": [{
-    "port": 1080,
-    "listen": "127.0.0.1",
-    "protocol": "socks",
-    "settings": {
-      "udp": true
-    }
-  }],
-  "outbounds": [{
-    "protocol": "vless",
-    "settings": {
-      "vnext": [{
-        "address": "aia.vast.pw",
-        "port": 28100,
-        "users": [{
-          "id": "638a3a0b-f9de-4503-a477-ec4f053fb944",
-          "encryption": "none",
-          "flow": ""
-        }]
-      }]
-    },
-    "streamSettings": {
-      "network": "ws",
-      "security": "tls",
-      "tlsSettings": {
-        "serverName": "aia.vast.pw",
-        "allowInsecure": true
-      },
-      "wsSettings": {
-        "path": "/nnmk",
-        "headers": {
-          "Host": "aia.vast.pw"
-        }
-      }
-    }
-  }]
+# SHA256SUM
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA256SUM() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+    SHA256SUM() { shasum -a 256 "$1" | awk '{print $1}'; }
+elif command -v openssl >/dev/null 2>&1; then
+    SHA256SUM() { openssl dgst -sha256 "$1" | awk '{print $2}'; }
+elif command -v busybox >/dev/null 2>&1; then
+    SHA256SUM() { busybox sha256sum "$1" | awk '{print $1}'; }
+fi
+
+# Must be root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "${RED}Error: Must run as root!${RESET}" >&2
+    exit 1
+fi
+
+# Check tools
+for tool in curl unzip; do
+    if ! command -v $tool >/dev/null 2>&1; then
+        tool_need="$tool $tool_need"
+    fi
+done
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; then
+    tool_need="openssl $tool_need"
+fi
+if [ -n "$tool_need" ]; then
+    if command -v apt >/dev/null 2>&1; then
+        apt update && apt install -y $tool_need
+    else
+        echo "$RED Please install $tool_need manually $RESET"
+        exit 1
+    fi
+fi
+
+notice_installled_tool() {
+    if [ -n "$tool_need" ]; then
+        echo "${GREEN}Installed dependencies: $tool_need${RESET}"
+    fi
 }
+
+# Arch
+case $(uname -m) in
+x86_64) arch="64"; arch2="x64";;
+armv7l) arch="arm32-v7a"; arch2="armv7";;
+aarch64) arch="arm64-v8a"; arch2="arm64";;
+riscv64) arch="riscv64"; arch2="riscv64";;
+*) echo "$RED Unsupported arch $RESET"; exit 1;;
+esac
+
+# Versions
+v2ray_url="https://github.com/v2fly/v2ray-core/releases/latest/download/v2ray-linux-$arch.zip"
+v2raya_ver=$(curl -s https://api.github.com/repos/v2rayA/v2rayA/releases/latest | grep tag_name | cut -d '"' -f4)
+v2raya_short=${v2raya_ver#v}
+v2raya_url="https://github.com/v2rayA/v2rayA/releases/download/$v2raya_ver/v2raya_linux_${arch2}_$v2raya_short"
+service_url="https://github.com/v2rayA/v2rayA-installer/raw/main/systemd/v2raya.service"
+
+# Download and install v2ray
+curl -L -o /tmp/v2ray.zip "$v2ray_url"
+curl -L -o /tmp/v2ray.dgst "$v2ray_url.dgst"
+if [ "$(SHA256SUM /tmp/v2ray.zip)" != "$(awk -F '= ' '/256=/ {print $2}' < /tmp/v2ray.dgst)" ]; then
+    echo "$RED v2ray hash mismatch $RESET"; exit 1
+fi
+unzip -q /tmp/v2ray.zip -d /tmp/v2ray
+install /tmp/v2ray/v2ray /usr/local/bin/v2ray
+mkdir -p /usr/local/share/v2ray
+mv /tmp/v2ray/geo*.dat /usr/local/share/v2ray
+
+# Download and install v2raya
+curl -L -o /tmp/v2raya "$v2raya_url"
+curl -L -o /tmp/v2raya.sha256.txt "$v2raya_url.sha256.txt"
+if [ "$(SHA256SUM /tmp/v2raya)" != "$(cat /tmp/v2raya.sha256.txt)" ]; then
+    echo "$RED v2rayA hash mismatch $RESET"; exit 1
+fi
+install /tmp/v2raya /usr/local/bin/v2raya
+curl -L -o /etc/systemd/system/v2raya.service "$service_url"
+systemctl daemon-reexec
+systemctl daemon-reload
+
+# 创建密码重置脚本
+cat >/usr/local/bin/v2raya-reset-password <<EOF
+#!/bin/sh
+v2raya -c /usr/local/etc/v2raya --reset-password
 EOF
+chmod +x /usr/local/bin/v2raya-reset-password
 
-# 创建 systemd 启动文件
-echo "创建 systemd 启动文件..."
-sudo tee /etc/systemd/system/v2ray.service <<EOF
-[Unit]
-Description=V2Ray Client Service
-After=network.target
+# 启动并启用服务
+systemctl start v2raya
+systemctl enable v2raya
 
-[Service]
-ExecStart=$INSTALL_DIR/v2ray -config $INSTALL_DIR/config.json
-Restart=on-failure
+notice_installled_tool
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 设置权限并启动服务
-echo "设置权限并启动 V2Ray 服务..."
-sudo chmod +x $INSTALL_DIR/v2ray
-sudo systemctl daemon-reload
-sudo systemctl enable v2ray
-sudo systemctl start v2ray
-
-# 检查V2Ray服务状态
-echo "检查 V2Ray 服务状态..."
-sudo systemctl status v2ray --no-pager
-
-# 提示用户安装完成
-echo "V2Ray 客户端安装并启动完成！"
-echo "可以通过 127.0.0.1:1080 使用 Socks5 代理。"
-
-# 设置全局代理（通过 V2Ray）
-echo -e "\n# 🌐 V2Ray 全局代理设置\nexport http_proxy=\"socks5h://127.0.0.1:1080\"\nexport https_proxy=\"socks5h://127.0.0.1:1080\"" >> ~/.bashrc
-echo "[INFO] 已添加代理环境变量到 ~/.bashrc"
-source ~/.bashrc
+echo "\n${GREEN}v2rayA 安装成功并已设置开机自启！${RESET}"
+echo "访问面板：http://<服务器IP>:2017"
+echo "默认用户名：admin，密码为空（可运行 v2raya-reset-password 重置）"
+echo "配置目录：/usr/local/etc/v2raya"
+echo "卸载方式：删除 /usr/local/bin/v2raya 与服务文件即可"
+echo "官网：https://v2raya.org"
