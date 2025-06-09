@@ -1,0 +1,153 @@
+#!/bin/bash
+set -e
+
+PROXY="http://127.0.0.1:20171"
+
+# 写入 proxyon 命令
+cat <<'PROXYON' > /usr/local/bin/proxyon
+#!/bin/bash
+PROXY="http://127.0.0.1:20171"
+
+log() {
+  echo -e "\033[1;32m[proxyon]\033[0m $1"
+}
+
+function set_proxy() {
+  log "设置当前终端代理..."
+  export http_proxy="$PROXY"
+  export https_proxy="$PROXY"
+
+  log "写入 /etc/environment（系统全局代理变量）..."
+  grep -q 'http_proxy' /etc/environment || echo "http_proxy=\"$PROXY\"" >> /etc/environment
+  grep -q 'https_proxy' /etc/environment || echo "https_proxy=\"$PROXY\"" >> /etc/environment
+
+  log "为所有用户配置 Shell 启动文件..."
+  for userhome in /root /home/*; do
+    bashrc="$userhome/.bashrc"
+    zshrc="$userhome/.zshrc"
+    for rc in "$bashrc" "$zshrc"; do
+      if [ -f "$rc" ]; then
+        sed -i '/http_proxy/d;/https_proxy/d' "$rc"
+        echo "export http_proxy=\"$PROXY\"" >> "$rc"
+        echo "export https_proxy=\"$PROXY\"" >> "$rc"
+      fi
+    done
+  done
+
+  log "配置 sudo 保留环境变量..."
+  echo 'Defaults env_keep += "http_proxy https_proxy"' > /etc/sudoers.d/proxy
+
+  if command -v apt >/dev/null 2>&1; then
+    log "配置 APT 代理..."
+    cat <<APTCONF > /etc/apt/apt.conf.d/99proxy
+Acquire::http::Proxy "$PROXY";
+Acquire::https::Proxy "$PROXY";
+APTCONF
+  fi
+
+  if command -v git >/dev/null 2>&1; then
+    log "配置 Git 全局代理..."
+    for user in $(ls /home); do
+      sudo -u "$user" git config --global http.proxy "$PROXY"
+      sudo -u "$user" git config --global https.proxy "$PROXY"
+    done
+    sudo -u root git config --global http.proxy "$PROXY"
+    sudo -u root git config --global https.proxy "$PROXY"
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    log "配置 Docker systemd 代理..."
+    mkdir -p /etc/systemd/system/docker.service.d
+    cat <<DOCKERCONF > /etc/systemd/system/docker.service.d/http-proxy.conf
+[Service]
+Environment="HTTP_PROXY=$PROXY" "HTTPS_PROXY=$PROXY"
+DOCKERCONF
+    systemctl daemon-reexec
+    systemctl daemon-reload
+    systemctl restart docker 2>/dev/null || true
+  fi
+
+  log "所有系统代理设置已完成。"
+}
+
+function unset_proxy() {
+  log "移除当前终端代理..."
+  unset http_proxy
+  unset https_proxy
+
+  log "清理 /etc/environment ..."
+  sed -i '/http_proxy/d;/https_proxy/d' /etc/environment
+
+  log "清理 Shell 启动文件..."
+  for userhome in /root /home/*; do
+    for rc in "$userhome/.bashrc" "$userhome/.zshrc"; do
+      [ -f "$rc" ] && sed -i '/http_proxy/d;/https_proxy/d' "$rc"
+    done
+  done
+
+  log "删除 sudoers 代理配置..."
+  rm -f /etc/sudoers.d/proxy
+
+  log "删除 APT 代理配置..."
+  rm -f /etc/apt/apt.conf.d/99proxy
+
+  log "移除 Git 全局代理..."
+  for user in $(ls /home); do
+    sudo -u "$user" git config --global --unset http.proxy 2>/dev/null || true
+    sudo -u "$user" git config --global --unset https.proxy 2>/dev/null || true
+  done
+  sudo -u root git config --global --unset http.proxy 2>/dev/null || true
+  sudo -u root git config --global --unset https.proxy 2>/dev/null || true
+
+  log "清理 Docker systemd 代理..."
+  rm -f /etc/systemd/system/docker.service.d/http-proxy.conf
+  systemctl daemon-reexec
+  systemctl daemon-reload
+  systemctl restart docker 2>/dev/null || true
+
+  log "所有代理设置已清除。"
+}
+
+function status_proxy() {
+  log "当前 http_proxy：$http_proxy"
+  log "APT Proxy："
+  grep Proxy /etc/apt/apt.conf.d/99proxy 2>/dev/null || echo "(无)"
+  log "Docker Proxy："
+  grep -A1 Environment /etc/systemd/system/docker.service.d/http-proxy.conf 2>/dev/null || echo "(无)"
+}
+
+case "$1" in
+  set) set_proxy ;;
+  unset) unset_proxy ;;
+  status) status_proxy ;;
+  *) echo "Usage: proxyon {set|unset|status}" ;;
+esac
+PROXYON
+
+chmod +x /usr/local/bin/proxyon
+
+# 设置 systemd 开机启动
+cat <<EOF > /etc/systemd/system/proxyon.service
+[Unit]
+Description=Enable system proxy on boot
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/proxyon set
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 启用并立即执行一次
+systemctl daemon-reload
+systemctl enable proxyon.service
+systemctl start proxyon.service
+
+echo "✅ proxyon 命令已安装，开机自动启用系统代理。"
+echo "✅ 可用命令示例："
+echo "   proxyon set     # 设置全局代理"
+echo "   proxyon unset   # 取消所有代理"
+echo "   proxyon status  # 查看当前代理状态"
