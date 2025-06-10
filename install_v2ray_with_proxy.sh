@@ -1,12 +1,6 @@
 #!/bin/bash
 set -e
 
-PROXY="http://127.0.0.1:20171"
-
-# 设定系统代理（防止 GitHub 下载失败）
-export http_proxy="$PROXY"
-export https_proxy="$PROXY"
-
 # 检查并安装必要依赖
 need_pkgs=""
 for pkg in wget unzip openssl; do
@@ -59,44 +53,10 @@ systemctl daemon-reload
 systemctl enable v2raya
 systemctl start v2raya
 
-# 写入系统全局代理（proxyon）
-cat >/usr/local/bin/proxyon <<EOF
-#!/bin/bash
-PROXY="$PROXY"
-export http_proxy="\$PROXY"
-export https_proxy="\$PROXY"
+echo -e "\n✅ v2ray + v2rayA 安装完成（无系统代理）"
+echo "🔗 面板地址：http://<你的服务器IP>:2017"
+echo "🔑 默认账户：admin 密码为空，可使用 v2raya-reset-password 重设"
 
-echo "写入 /etc/environment..."
-grep -q 'http_proxy' /etc/environment || echo "http_proxy=\$PROXY" >> /etc/environment
-grep -q 'https_proxy' /etc/environment || echo "https_proxy=\$PROXY" >> /etc/environment
-
-echo "写入 /etc/apt/apt.conf.d/99proxy..."
-echo 'Acquire::http::Proxy "\$PROXY";' > /etc/apt/apt.conf.d/99proxy
-echo 'Acquire::https::Proxy "\$PROXY";' >> /etc/apt/apt.conf.d/99proxy
-
-echo "写入 Git 配置..."
-for user in /root /home/*; do
-  if [ -d "\$user" ]; then
-    sudo -u \$(basename "\$user") git config --global http.proxy "\$PROXY" 2>/dev/null || true
-    sudo -u \$(basename "\$user") git config --global https.proxy "\$PROXY" 2>/dev/null || true
-  fi
-done
-
-echo "写入 Docker 代理..."
-mkdir -p /etc/systemd/system/docker.service.d
-cat <<DOCKER > /etc/systemd/system/docker.service.d/http-proxy.conf
-[Service]
-Environment="HTTP_PROXY=\$PROXY" "HTTPS_PROXY=\$PROXY"
-DOCKER
-
-systemctl daemon-reexec
-systemctl daemon-reload
-systemctl restart docker 2>/dev/null || true
-
-echo "✅ 全局代理设置完成"
-EOF
-
-chmod +x /usr/local/bin/proxyon
 /usr/local/bin/proxyon
 
 echo -e "\n✅ v2ray + v2rayA 安装完成，已配置国内加速与全局代理"
