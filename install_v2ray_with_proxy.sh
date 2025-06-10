@@ -32,7 +32,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Check tools
-for tool in curl unzip; do
+for tool in wget unzip; do
     if ! command -v $tool >/dev/null 2>&1; then
         tool_need="$tool $tool_need"
     fi
@@ -65,15 +65,15 @@ riscv64) arch="riscv64"; arch2="riscv64";;
 esac
 
 # Versions
-v2ray_url="https://github.com/v2fly/v2ray-core/releases/latest/download/v2ray-linux-$arch.zip"
-v2raya_ver=$(curl -s https://api.github.com/repos/v2rayA/v2rayA/releases/latest | grep tag_name | cut -d '"' -f4)
+v2ray_url="https://ghproxy.com/https://github.com/v2fly/v2ray-core/releases/latest/download/v2ray-linux-$arch.zip"
+v2raya_ver=$(wget -qO- https://ghproxy.com/https://api.github.com/repos/v2rayA/v2rayA/releases/latest | grep tag_name | cut -d '"' -f4)
 v2raya_short=${v2raya_ver#v}
-v2raya_url="https://github.com/v2rayA/v2rayA/releases/download/$v2raya_ver/v2raya_linux_${arch2}_$v2raya_short"
-service_url="https://github.com/v2rayA/v2rayA-installer/raw/main/systemd/v2raya.service"
+v2raya_url="https://ghproxy.com/https://github.com/v2rayA/v2rayA/releases/download/$v2raya_ver/v2raya_linux_${arch2}_$v2raya_short"
+service_url="https://ghproxy.com/https://raw.githubusercontent.com/v2rayA/v2rayA-installer/main/systemd/v2raya.service"
 
 # Download and install v2ray
-curl -L -o /tmp/v2ray.zip "$v2ray_url"
-curl -L -o /tmp/v2ray.dgst "$v2ray_url.dgst"
+wget -O /tmp/v2ray.zip "$v2ray_url"
+wget -O /tmp/v2ray.dgst "$v2ray_url.dgst"
 if [ "$(SHA256SUM /tmp/v2ray.zip)" != "$(awk -F '= ' '/256=/ {print $2}' < /tmp/v2ray.dgst)" ]; then
     echo "$RED v2ray hash mismatch $RESET"; exit 1
 fi
@@ -83,13 +83,13 @@ mkdir -p /usr/local/share/v2ray
 mv /tmp/v2ray/geo*.dat /usr/local/share/v2ray
 
 # Download and install v2raya
-curl -L -o /tmp/v2raya "$v2raya_url"
-curl -L -o /tmp/v2raya.sha256.txt "$v2raya_url.sha256.txt"
+wget -O /tmp/v2raya "$v2raya_url"
+wget -O /tmp/v2raya.sha256.txt "$v2raya_url.sha256.txt"
 if [ "$(SHA256SUM /tmp/v2raya)" != "$(cat /tmp/v2raya.sha256.txt)" ]; then
     echo "$RED v2rayA hash mismatch $RESET"; exit 1
 fi
 install /tmp/v2raya /usr/local/bin/v2raya
-curl -L -o /etc/systemd/system/v2raya.service "$service_url"
+wget -O /etc/systemd/system/v2raya.service "$service_url"
 systemctl daemon-reexec
 systemctl daemon-reload
 
